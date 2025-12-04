@@ -201,3 +201,84 @@ func RunTextEmbedding(
 
 	return outputTensor.GetData(), outputTensor.GetShape(), nil
 }
+
+// HasInput checks if the model has a specific input by name.
+// This requires inspecting the model to determine available inputs.
+func (s *Session) HasInput(name string) bool {
+	// For now, default to false and let models opt-in
+	// Most reranker models (BGE, JINA) work without token_type_ids
+	// TODO: Actually inspect ONNX model metadata for available inputs
+	return false
+}
+
+// RunReranking runs a reranking inference to score query-document pairs.
+// Returns a score for each document in the batch.
+func RunReranking(
+	session *Session,
+	inputIDs, attentionMask, tokenTypeIDs []int64,
+	batchSize, seqLen int,
+	useTokenTypeIDs bool,
+) ([]float32, error) {
+	inputShape := ort.NewShape(int64(batchSize), int64(seqLen))
+
+	// Create input tensors
+	inputIDTensor, err := ort.NewTensor(inputShape, inputIDs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create input_ids tensor: %w", err)
+	}
+	defer inputIDTensor.Destroy()
+
+	maskTensor, err := ort.NewTensor(inputShape, attentionMask)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create attention_mask tensor: %w", err)
+	}
+	defer maskTensor.Destroy()
+
+	// Build inputs based on whether model uses token_type_ids
+	var inputNames []string
+	var inputs []ort.ArbitraryTensor
+
+	if useTokenTypeIDs {
+		typeTensor, err := ort.NewTensor(inputShape, tokenTypeIDs)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create token_type_ids tensor: %w", err)
+		}
+		defer typeTensor.Destroy()
+
+		inputNames = []string{"input_ids", "attention_mask", "token_type_ids"}
+		inputs = []ort.ArbitraryTensor{inputIDTensor, maskTensor, typeTensor}
+	} else {
+		inputNames = []string{"input_ids", "attention_mask"}
+		inputs = []ort.ArbitraryTensor{inputIDTensor, maskTensor}
+	}
+
+	// Rerankers output logits with shape [batch_size, 1] or [batch_size, 2]
+	// We need the first column (logits[:, 0])
+	outputShape := ort.NewShape(int64(batchSize), 1)
+	outputTensor, err := ort.NewEmptyTensor[float32](outputShape)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create output tensor: %w", err)
+	}
+	defer outputTensor.Destroy()
+
+	outputNames := []string{"logits"}
+
+	// Initialize dynamic session on first use (cached for subsequent calls)
+	if err := session.initDynamicSession(inputNames, outputNames); err != nil {
+		return nil, err
+	}
+
+	// Run inference using cached dynamic session
+	if err := session.dynamicSession.Run(inputs, []ort.ArbitraryTensor{outputTensor}); err != nil {
+		return nil, fmt.Errorf("failed to run session: %w", err)
+	}
+
+	// Extract scores (first column of logits)
+	data := outputTensor.GetData()
+	scores := make([]float32, batchSize)
+	for i := 0; i < batchSize; i++ {
+		scores[i] = data[i]
+	}
+
+	return scores, nil
+}

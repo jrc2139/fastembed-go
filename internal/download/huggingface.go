@@ -4,6 +4,7 @@ package download
 import (
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -31,6 +32,9 @@ type Config struct {
 
 	// ShowProgress enables download progress display.
 	ShowProgress bool
+
+	// Logger is the slog.Logger for logging. If nil, no logging is performed.
+	Logger *slog.Logger
 }
 
 // TokenizerFiles are the standard tokenizer files to download.
@@ -49,6 +53,12 @@ func RetrieveModel(cfg Config) (string, error) {
 	// Check if model file already exists
 	modelFilePath := filepath.Join(modelDir, filepath.Base(cfg.ModelFile))
 	if _, err := os.Stat(modelFilePath); err == nil {
+		if cfg.Logger != nil {
+			cfg.Logger.Debug("model already cached",
+				slog.String("model", cfg.ModelCode),
+				slog.String("path", modelDir),
+			)
+		}
 		return modelDir, nil
 	}
 
@@ -64,8 +74,12 @@ func downloadModel(cfg Config, modelDir string) (string, error) {
 	// Build list of files to download
 	files := buildFileList(cfg)
 
-	if cfg.ShowProgress {
-		fmt.Printf("Downloading %s from HuggingFace...\n", cfg.ModelCode)
+	if cfg.Logger != nil {
+		cfg.Logger.Info("downloading model from HuggingFace",
+			slog.String("model", cfg.ModelCode),
+			slog.String("destination", modelDir),
+			slog.Int("file_count", len(files)),
+		)
 	}
 
 	endpoint := getHFEndpoint()
@@ -74,9 +88,23 @@ func downloadModel(cfg Config, modelDir string) (string, error) {
 		url := fmt.Sprintf("%s/%s/resolve/main/%s", endpoint, cfg.ModelCode, filename)
 		destPath := filepath.Join(modelDir, filepath.Base(filename))
 
+		if cfg.Logger != nil {
+			cfg.Logger.Debug("downloading file",
+				slog.String("file", filename),
+				slog.String("url", url),
+			)
+		}
+
 		if err := downloadFile(url, destPath, cfg.ShowProgress); err != nil {
 			return "", fmt.Errorf("failed to download %s: %w", filename, err)
 		}
+	}
+
+	if cfg.Logger != nil {
+		cfg.Logger.Info("model download complete",
+			slog.String("model", cfg.ModelCode),
+			slog.String("path", modelDir),
+		)
 	}
 
 	return modelDir, nil

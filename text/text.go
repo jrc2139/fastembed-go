@@ -3,6 +3,7 @@ package text
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"math"
 	"path/filepath"
 	"sync"
@@ -30,6 +31,7 @@ type TextEmbedding struct {
 	dim           int
 	useTokenTypes bool
 	is2DOutput    bool // true for models with direct sentence embeddings (e.g., OutputKey="sentence_embedding")
+	logger        *slog.Logger
 }
 
 // New creates a TextEmbedding from a built-in model.
@@ -39,10 +41,18 @@ func New(opts ...Option) (*TextEmbedding, error) {
 		opt(&cfg)
 	}
 
+	log := cfg.Logger
+
 	info := GetModelInfo(cfg.Model)
 	if info == nil {
 		return nil, fmt.Errorf("model %s not found in registry", cfg.Model)
 	}
+
+	log.Info("initializing text embedding model",
+		slog.String("model", string(cfg.Model)),
+		slog.String("model_code", info.ModelCode),
+		slog.Int("dimension", info.Dim),
+	)
 
 	// Download or retrieve cached model
 	modelDir, err := download.RetrieveModel(download.Config{
@@ -52,12 +62,14 @@ func New(opts ...Option) (*TextEmbedding, error) {
 		TokenizerPath:   info.TokenizerPath,
 		CacheDir:        cfg.CacheDir,
 		ShowProgress:    cfg.ShowProgress,
+		Logger:          log,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to retrieve model: %w", err)
 	}
 
 	// Load tokenizer
+	log.Debug("loading tokenizer", slog.String("path", modelDir))
 	tknzer, err := tokenizer.LoadFromPath(modelDir, cfg.MaxLength)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load tokenizer: %w", err)
@@ -65,6 +77,10 @@ func New(opts ...Option) (*TextEmbedding, error) {
 
 	// Create ONNX session
 	modelPath := filepath.Join(modelDir, filepath.Base(info.ModelFile))
+	log.Debug("creating ONNX session",
+		slog.String("model_path", modelPath),
+		slog.Int("provider_count", len(cfg.Providers)),
+	)
 	session, err := onnx.NewSession(modelPath, cfg.Providers...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create ONNX session: %w", err)
@@ -86,6 +102,12 @@ func New(opts ...Option) (*TextEmbedding, error) {
 		is2DOutput = true // Custom output key indicates 2D sentence embeddings
 	}
 
+	log.Info("text embedding model ready",
+		slog.String("model", string(cfg.Model)),
+		slog.String("pooling", p.String()),
+		slog.String("output_key", outputKey),
+	)
+
 	return &TextEmbedding{
 		tokenizer:     tknzer,
 		session:       session,
@@ -95,6 +117,7 @@ func New(opts ...Option) (*TextEmbedding, error) {
 		dim:           info.Dim,
 		useTokenTypes: !info.NoTokenTypeIDs,
 		is2DOutput:    is2DOutput,
+		logger:        log,
 	}, nil
 }
 
@@ -133,11 +156,18 @@ func (t *TextEmbedding) Embed(ctx context.Context, texts []string, batchSize int
 
 	// Adjust batch size
 	batchSize = t.quantization.AdjustBatchSize(batchSize, len(texts), 256)
+	numBatches := (len(texts) + batchSize - 1) / batchSize
+
+	t.logger.Debug("embedding texts",
+		slog.Int("text_count", len(texts)),
+		slog.Int("batch_size", batchSize),
+		slog.Int("num_batches", numBatches),
+	)
 
 	// Process in batches
 	embeddings := make([]Embedding, len(texts))
 	var wg sync.WaitGroup
-	errCh := make(chan error, (len(texts)+batchSize-1)/batchSize)
+	errCh := make(chan error, numBatches)
 
 	for i := 0; i < len(texts); i += batchSize {
 		end := i + batchSize

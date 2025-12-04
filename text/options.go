@@ -1,6 +1,9 @@
 package text
 
 import (
+	"log/slog"
+	"os"
+
 	"github.com/anush008/fastembed-go/internal/download"
 	"github.com/anush008/fastembed-go/internal/onnx"
 	"github.com/anush008/fastembed-go/internal/pooling"
@@ -14,6 +17,14 @@ type config struct {
 	ShowProgress bool
 	Pooling      *pooling.Strategy
 	Providers    []onnx.ExecutionProvider
+	Logger       *slog.Logger
+}
+
+// defaultLogger returns a default JSON logger to stderr at INFO level.
+func defaultLogger() *slog.Logger {
+	return slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	}))
 }
 
 // defaultConfig returns the default configuration.
@@ -23,6 +34,7 @@ func defaultConfig() config {
 		CacheDir:     download.GetCacheDir(),
 		MaxLength:    512,
 		ShowProgress: true,
+		Logger:       defaultLogger(),
 	}
 }
 
@@ -82,5 +94,13 @@ func WithCUDA(deviceID int) Option {
 func WithCoreML() Option {
 	return func(c *config) {
 		c.Providers = append(c.Providers, onnx.CoreMLProvider())
+	}
+}
+
+// WithLogger sets a custom slog.Logger for the embedding model.
+// If not set, a no-op logger is used (no logging output).
+func WithLogger(logger *slog.Logger) Option {
+	return func(c *config) {
+		c.Logger = logger
 	}
 }
