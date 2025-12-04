@@ -3,6 +3,7 @@ package text
 import (
 	"log/slog"
 	"os"
+	"runtime"
 
 	"github.com/anush008/fastembed-go/internal/download"
 	"github.com/anush008/fastembed-go/internal/onnx"
@@ -18,6 +19,7 @@ type config struct {
 	Pooling      *pooling.Strategy
 	Providers    []onnx.ExecutionProvider
 	Logger       *slog.Logger
+	MaxWorkers   int // Maximum number of worker goroutines for parallel batch processing
 }
 
 // defaultLogger returns a default JSON logger to stderr at INFO level.
@@ -35,6 +37,7 @@ func defaultConfig() config {
 		MaxLength:    512,
 		ShowProgress: true,
 		Logger:       defaultLogger(),
+		MaxWorkers:   runtime.NumCPU(), // Default to number of CPUs
 	}
 }
 
@@ -98,9 +101,19 @@ func WithCoreML() Option {
 }
 
 // WithLogger sets a custom slog.Logger for the embedding model.
-// If not set, a no-op logger is used (no logging output).
+// If not set, a default JSON logger to stderr is used.
 func WithLogger(logger *slog.Logger) Option {
 	return func(c *config) {
 		c.Logger = logger
+	}
+}
+
+// WithMaxWorkers sets the maximum number of worker goroutines for parallel batch processing.
+// Default is runtime.NumCPU().
+func WithMaxWorkers(n int) Option {
+	return func(c *config) {
+		if n > 0 {
+			c.MaxWorkers = n
+		}
 	}
 }

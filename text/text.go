@@ -6,8 +6,8 @@ import (
 	"log/slog"
 	"math"
 	"path/filepath"
-	"sync"
 
+	"github.com/alitto/pond/v2"
 	tk "github.com/sugarme/tokenizer"
 
 	"github.com/anush008/fastembed-go/internal/download"
@@ -32,6 +32,7 @@ type TextEmbedding struct {
 	useTokenTypes bool
 	is2DOutput    bool // true for models with direct sentence embeddings (e.g., OutputKey="sentence_embedding")
 	logger        *slog.Logger
+	pool          pond.Pool // Worker pool for parallel batch processing
 }
 
 // New creates a TextEmbedding from a built-in model.
@@ -102,10 +103,14 @@ func New(opts ...Option) (*TextEmbedding, error) {
 		is2DOutput = true // Custom output key indicates 2D sentence embeddings
 	}
 
+	// Create worker pool for parallel batch processing
+	workerPool := pond.NewPool(cfg.MaxWorkers)
+
 	log.Info("text embedding model ready",
 		slog.String("model", string(cfg.Model)),
 		slog.String("pooling", p.String()),
 		slog.String("output_key", outputKey),
+		slog.Int("max_workers", cfg.MaxWorkers),
 	)
 
 	return &TextEmbedding{
@@ -118,6 +123,7 @@ func New(opts ...Option) (*TextEmbedding, error) {
 		useTokenTypes: !info.NoTokenTypeIDs,
 		is2DOutput:    is2DOutput,
 		logger:        log,
+		pool:          workerPool,
 	}, nil
 }
 
@@ -164,50 +170,40 @@ func (t *TextEmbedding) Embed(ctx context.Context, texts []string, batchSize int
 		slog.Int("num_batches", numBatches),
 	)
 
-	// Process in batches
+	// Process in batches using worker pool
 	embeddings := make([]Embedding, len(texts))
-	var wg sync.WaitGroup
-	errCh := make(chan error, numBatches)
+	group := t.pool.NewGroup()
 
 	for i := 0; i < len(texts); i += batchSize {
-		end := i + batchSize
+		start, end := i, i+batchSize
 		if end > len(texts) {
 			end = len(texts)
 		}
 
-		wg.Add(1)
-		go func(start, end int) {
-			defer wg.Done()
-
+		group.SubmitErr(func() error {
 			// Check context cancellation
 			select {
 			case <-ctx.Done():
-				errCh <- ctx.Err()
-				return
+				return ctx.Err()
 			default:
 			}
 
 			batch := texts[start:end]
 			batchEmbeddings, err := t.embedBatch(batch)
 			if err != nil {
-				errCh <- err
-				return
+				return err
 			}
 
 			for j, emb := range batchEmbeddings {
 				embeddings[start+j] = emb
 			}
-		}(i, end)
+			return nil
+		})
 	}
 
-	wg.Wait()
-	close(errCh)
-
-	// Return first error if any
-	for err := range errCh {
-		if err != nil {
-			return nil, err
-		}
+	// Wait for all tasks to complete
+	if err := group.Wait(); err != nil {
+		return nil, err
 	}
 
 	return embeddings, nil
@@ -308,6 +304,11 @@ func (t *TextEmbedding) InstructEmbed(ctx context.Context, texts []string, task 
 
 // Destroy releases resources held by the embedding model.
 func (t *TextEmbedding) Destroy() error {
+	// Stop the worker pool
+	if t.pool != nil {
+		t.pool.StopAndWait()
+	}
+
 	if t.session != nil {
 		return t.session.Destroy()
 	}
