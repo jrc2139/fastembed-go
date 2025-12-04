@@ -1,9 +1,11 @@
-// Package rerank provides cross-encoder reranking functionality using ONNX models.
+// Package rerank provides reranking functionality using either cross-encoder or bi-encoder models.
 package rerank
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -15,6 +17,12 @@ import (
 	"github.com/anush008/fastembed-go/internal/onnx"
 )
 
+// Embedder is an interface for text embedding models.
+// This allows using any embedding model for bi-encoder reranking.
+type Embedder interface {
+	Embed(ctx context.Context, texts []string, batchSize int) ([][]float32, error)
+}
+
 // Result represents a reranking result for a single document.
 type Result struct {
 	Document string  // The original document text (if ReturnDocuments=true)
@@ -22,13 +30,21 @@ type Result struct {
 	Index    int     // Original index in the input documents array
 }
 
-// TextRerank is a cross-encoder reranker.
+// TextRerank supports both cross-encoder and bi-encoder reranking.
+// Cross-encoder: Uses dedicated reranker models (more accurate, slower)
+// Bi-encoder: Uses any embedding model with cosine similarity (faster, more flexible)
 type TextRerank struct {
-	session      *onnx.Session
-	tokenizer    *tk.Tokenizer
-	maxLength    int
-	needTypeIDs  bool
-	model        Model
+	// Cross-encoder fields
+	session     *onnx.Session
+	tokenizer   *tk.Tokenizer
+	maxLength   int
+	needTypeIDs bool
+	model       Model
+
+	// Bi-encoder field
+	embedder Embedder
+
+	// Common fields
 	showProgress bool
 	cacheDir     string
 	useCUDA      bool
@@ -83,14 +99,26 @@ func WithCUDA(deviceID int) Option {
 }
 
 // WithLogger sets a custom slog.Logger for the reranker.
-// If not set, a no-op logger is used (no logging output).
+// If not set, a default JSON logger to stderr is used.
 func WithLogger(logger *slog.Logger) Option {
 	return func(r *TextRerank) {
 		r.logger = logger
 	}
 }
 
+// WithEmbedder sets an embedding model for bi-encoder reranking.
+// When set, the reranker uses cosine similarity between query and document embeddings
+// instead of a dedicated cross-encoder model. This is faster and more flexible,
+// but may be less accurate than cross-encoder reranking.
+func WithEmbedder(embedder Embedder) Option {
+	return func(r *TextRerank) {
+		r.embedder = embedder
+	}
+}
+
 // New creates a new TextRerank instance.
+// If WithEmbedder is provided, uses bi-encoder mode (cosine similarity).
+// Otherwise, loads a cross-encoder reranker model.
 func New(opts ...Option) (*TextRerank, error) {
 	r := &TextRerank{
 		model:     BGERerankerBase,
@@ -104,13 +132,22 @@ func New(opts ...Option) (*TextRerank, error) {
 
 	log := r.logger
 
-	// Get model info
+	// If embedder is provided, use bi-encoder mode
+	if r.embedder != nil {
+		log.Info("initializing bi-encoder reranker",
+			slog.String("mode", "bi-encoder"),
+		)
+		return r, nil
+	}
+
+	// Cross-encoder mode: load dedicated reranker model
 	info := GetModelInfo(r.model)
 	if info == nil {
 		return nil, fmt.Errorf("unknown reranker model: %s", r.model)
 	}
 
-	log.Info("initializing reranker",
+	log.Info("initializing cross-encoder reranker",
+		slog.String("mode", "cross-encoder"),
 		slog.String("model", string(r.model)),
 		slog.String("model_code", info.ModelCode),
 	)
@@ -185,7 +222,7 @@ func New(opts ...Option) (*TextRerank, error) {
 	r.tokenizer = tokenizer
 	r.needTypeIDs = needTypeIDs
 
-	log.Info("reranker ready",
+	log.Info("cross-encoder reranker ready",
 		slog.String("model", string(r.model)),
 		slog.Bool("needs_token_type_ids", needTypeIDs),
 	)
@@ -204,8 +241,19 @@ func (r *TextRerank) RerankWithBatchSize(query string, documents []string, retur
 		return nil, nil
 	}
 
+	// Use bi-encoder mode if embedder is available
+	if r.embedder != nil {
+		return r.rerankBiEncoder(query, documents, returnDocuments, batchSize)
+	}
+
+	// Cross-encoder mode
+	return r.rerankCrossEncoder(query, documents, returnDocuments, batchSize)
+}
+
+// rerankCrossEncoder performs reranking using a dedicated cross-encoder model.
+func (r *TextRerank) rerankCrossEncoder(query string, documents []string, returnDocuments bool, batchSize int) ([]Result, error) {
 	numBatches := (len(documents) + batchSize - 1) / batchSize
-	r.logger.Debug("reranking documents",
+	r.logger.Debug("cross-encoder reranking",
 		slog.Int("document_count", len(documents)),
 		slog.Int("batch_size", batchSize),
 		slog.Int("num_batches", numBatches),
@@ -221,7 +269,7 @@ func (r *TextRerank) RerankWithBatchSize(query string, documents []string, retur
 		}
 		batch := documents[start:end]
 
-		scores, err := r.scoreBatch(query, batch)
+		scores, err := r.scoreBatchCrossEncoder(query, batch)
 		if err != nil {
 			return nil, fmt.Errorf("failed to score batch: %w", err)
 		}
@@ -246,8 +294,64 @@ func (r *TextRerank) RerankWithBatchSize(query string, documents []string, retur
 	return results, nil
 }
 
-// scoreBatch scores a batch of documents against the query.
-func (r *TextRerank) scoreBatch(query string, documents []string) ([]float32, error) {
+// rerankBiEncoder performs reranking using cosine similarity between embeddings.
+func (r *TextRerank) rerankBiEncoder(query string, documents []string, returnDocuments bool, batchSize int) ([]Result, error) {
+	r.logger.Debug("bi-encoder reranking",
+		slog.Int("document_count", len(documents)),
+		slog.Int("batch_size", batchSize),
+	)
+
+	ctx := context.Background()
+
+	// Embed the query
+	queryEmbeddings, err := r.embedder.Embed(ctx, []string{query}, 1)
+	if err != nil {
+		return nil, fmt.Errorf("failed to embed query: %w", err)
+	}
+	queryEmb := queryEmbeddings[0]
+
+	// Embed all documents
+	docEmbeddings, err := r.embedder.Embed(ctx, documents, batchSize)
+	if err != nil {
+		return nil, fmt.Errorf("failed to embed documents: %w", err)
+	}
+
+	// Calculate cosine similarities
+	results := make([]Result, len(documents))
+	for i, docEmb := range docEmbeddings {
+		results[i] = Result{
+			Score: cosineSimilarity(queryEmb, docEmb),
+			Index: i,
+		}
+		if returnDocuments {
+			results[i].Document = documents[i]
+		}
+	}
+
+	// Sort by score descending
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Score > results[j].Score
+	})
+
+	return results, nil
+}
+
+// cosineSimilarity computes the cosine similarity between two vectors.
+// Assumes both vectors are already L2 normalized.
+func cosineSimilarity(a, b []float32) float32 {
+	if len(a) != len(b) || len(a) == 0 {
+		return 0
+	}
+	var dot float64
+	for i := range a {
+		dot += float64(a[i]) * float64(b[i])
+	}
+	// Clamp to [-1, 1] to handle floating point errors
+	return float32(math.Max(-1, math.Min(1, dot)))
+}
+
+// scoreBatchCrossEncoder scores a batch of documents using cross-encoder inference.
+func (r *TextRerank) scoreBatchCrossEncoder(query string, documents []string) ([]float32, error) {
 	// Tokenize query-document pairs
 	inputs := make([]tk.EncodeInput, len(documents))
 	querySeq := tk.NewInputSequence(query)
