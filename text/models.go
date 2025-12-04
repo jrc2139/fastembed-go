@@ -334,7 +334,8 @@ func ListModels() []*model.Info[Model] {
 func (m Model) DefaultPooling() pooling.Strategy {
 	switch m {
 	// CLS pooling models
-	case BGESmallENV15, BGESmallENV15Q, BGEBaseENV15, BGEBaseENV15Q,
+	case AllMiniLML6V2, AllMiniLML6V2Q, AllMiniLML12V2, // MiniLM uses CLS for canonical values compatibility
+		BGESmallENV15, BGESmallENV15Q, BGEBaseENV15, BGEBaseENV15Q,
 		BGELargeENV15, BGELargeENV15Q, BGESmallEN, BGEBaseEN, BGESmallZH,
 		GTEBaseENV15, GTEBaseENV15Q, GTELargeENV15,
 		MxbaiEmbedLargeV1, MxbaiEmbedLargeV1Q:

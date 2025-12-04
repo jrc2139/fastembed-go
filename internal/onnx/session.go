@@ -2,6 +2,7 @@ package onnx
 
 import (
 	"fmt"
+	"os"
 	"sync"
 
 	ort "github.com/yalue/onnxruntime_go"
@@ -14,8 +15,14 @@ var (
 
 // Initialize initializes the ONNX Runtime environment.
 // Safe to call multiple times - only initializes once.
+// Respects ONNX_PATH environment variable for custom library location.
 func Initialize() error {
 	initOnce.Do(func() {
+		// Set library path from environment if provided
+		if onnxPath := os.Getenv("ONNX_PATH"); onnxPath != "" {
+			ort.SetSharedLibraryPath(onnxPath)
+		}
+
 		if !ort.IsInitialized() {
 			initErr = ort.InitializeEnvironment()
 		}
@@ -38,13 +45,18 @@ type SessionConfig struct {
 	Providers []ExecutionProvider
 }
 
-// Session wraps an ONNX Runtime advanced session.
+// Session wraps an ONNX Runtime dynamic session for efficient inference.
+// Uses DynamicAdvancedSession which supports variable input shapes without
+// recreating the session for each request.
 type Session struct {
-	modelPath string
-	options   *ort.SessionOptions
+	modelPath      string
+	options        *ort.SessionOptions
+	dynamicSession *ort.DynamicAdvancedSession
+	inputNames     []string
+	outputNames    []string
 }
 
-// NewSession creates a new ONNX session configuration.
+// NewSession creates a new ONNX session with dynamic input support.
 func NewSession(modelPath string, providers ...ExecutionProvider) (*Session, error) {
 	if err := Initialize(); err != nil {
 		return nil, fmt.Errorf("failed to initialize ONNX Runtime: %w", err)
@@ -69,6 +81,28 @@ func NewSession(modelPath string, providers ...ExecutionProvider) (*Session, err
 	}, nil
 }
 
+// initDynamicSession lazily initializes the dynamic session with specific input/output names.
+func (s *Session) initDynamicSession(inputNames, outputNames []string) error {
+	if s.dynamicSession != nil {
+		return nil
+	}
+
+	ds, err := ort.NewDynamicAdvancedSession(
+		s.modelPath,
+		inputNames,
+		outputNames,
+		s.options,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create dynamic session: %w", err)
+	}
+
+	s.dynamicSession = ds
+	s.inputNames = inputNames
+	s.outputNames = outputNames
+	return nil
+}
+
 // Options returns the session options for use with AdvancedSession.
 func (s *Session) Options() *ort.SessionOptions {
 	return s.options
@@ -81,20 +115,28 @@ func (s *Session) ModelPath() string {
 
 // Destroy cleans up session resources.
 func (s *Session) Destroy() error {
+	if s.dynamicSession != nil {
+		if err := s.dynamicSession.Destroy(); err != nil {
+			return err
+		}
+	}
 	if s.options != nil {
 		return s.options.Destroy()
 	}
 	return nil
 }
 
-// RunTextEmbedding runs a text embedding inference.
-// Handles both 2D (sentence embeddings) and 3D (token embeddings) outputs.
+// RunTextEmbedding runs a text embedding inference using a cached dynamic session.
+// is2DOutput should be true for models that output direct sentence embeddings (2D: batch, dim),
+// false for models that output token embeddings (3D: batch, seq_len, dim).
+// Models with custom OutputKey (like "sentence_embedding") typically use 2D output.
 func RunTextEmbedding(
 	session *Session,
 	inputIDs, attentionMask, tokenTypeIDs []int64,
 	batchSize, seqLen, dim int,
 	outputKey string,
 	useTokenTypeIDs bool,
+	is2DOutput bool,
 ) ([]float32, []int64, error) {
 	inputShape := ort.NewShape(int64(batchSize), int64(seqLen))
 
@@ -129,60 +171,33 @@ func RunTextEmbedding(
 		inputs = []ort.ArbitraryTensor{inputIDTensor, maskTensor}
 	}
 
-	// Try 2D output first (sentence embeddings), fall back to 3D (token embeddings)
-	outputShape2D := ort.NewShape(int64(batchSize), int64(dim))
-	outputTensor2D, err := ort.NewEmptyTensor[float32](outputShape2D)
+	// Create output tensor based on expected output shape
+	var outputTensor *ort.Tensor[float32]
+	if is2DOutput {
+		// 2D output: direct sentence embeddings (batch, dim)
+		outputShape := ort.NewShape(int64(batchSize), int64(dim))
+		outputTensor, err = ort.NewEmptyTensor[float32](outputShape)
+	} else {
+		// 3D output: token embeddings (batch, seq_len, dim)
+		outputShape := ort.NewShape(int64(batchSize), int64(seqLen), int64(dim))
+		outputTensor, err = ort.NewEmptyTensor[float32](outputShape)
+	}
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create output tensor: %w", err)
 	}
+	defer outputTensor.Destroy()
 
-	// Try 2D session
-	advSession, err := ort.NewAdvancedSession(
-		session.modelPath,
-		inputNames,
-		[]string{outputKey},
-		inputs,
-		[]ort.ArbitraryTensor{outputTensor2D},
-		session.options,
-	)
+	outputNames := []string{outputKey}
 
-	if err == nil {
-		defer advSession.Destroy()
-		defer outputTensor2D.Destroy()
-
-		if err := advSession.Run(); err != nil {
-			return nil, nil, fmt.Errorf("failed to run session: %w", err)
-		}
-
-		return outputTensor2D.GetData(), outputTensor2D.GetShape(), nil
+	// Initialize dynamic session on first use (cached for subsequent calls)
+	if err := session.initDynamicSession(inputNames, outputNames); err != nil {
+		return nil, nil, err
 	}
 
-	// 2D failed, try 3D output
-	outputTensor2D.Destroy()
-
-	outputShape3D := ort.NewShape(int64(batchSize), int64(seqLen), int64(dim))
-	outputTensor3D, err := ort.NewEmptyTensor[float32](outputShape3D)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create 3D output tensor: %w", err)
-	}
-	defer outputTensor3D.Destroy()
-
-	advSession, err = ort.NewAdvancedSession(
-		session.modelPath,
-		inputNames,
-		[]string{outputKey},
-		inputs,
-		[]ort.ArbitraryTensor{outputTensor3D},
-		session.options,
-	)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create session: %w", err)
-	}
-	defer advSession.Destroy()
-
-	if err := advSession.Run(); err != nil {
+	// Run inference using cached dynamic session
+	if err := session.dynamicSession.Run(inputs, []ort.ArbitraryTensor{outputTensor}); err != nil {
 		return nil, nil, fmt.Errorf("failed to run session: %w", err)
 	}
 
-	return outputTensor3D.GetData(), outputTensor3D.GetShape(), nil
+	return outputTensor.GetData(), outputTensor.GetShape(), nil
 }

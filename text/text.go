@@ -29,6 +29,7 @@ type TextEmbedding struct {
 	outputKey     string
 	dim           int
 	useTokenTypes bool
+	is2DOutput    bool // true for models with direct sentence embeddings (e.g., OutputKey="sentence_embedding")
 }
 
 // New creates a TextEmbedding from a built-in model.
@@ -75,10 +76,14 @@ func New(opts ...Option) (*TextEmbedding, error) {
 		p = *cfg.Pooling
 	}
 
-	// Determine output key
+	// Determine output key and whether output is 2D
+	// Models with custom OutputKey (like "sentence_embedding") produce direct sentence embeddings (2D)
+	// Models with default "last_hidden_state" produce token embeddings (3D) that need pooling
 	outputKey := "last_hidden_state"
+	is2DOutput := false
 	if info.OutputKey != nil && info.OutputKey.Type == output.ByName {
 		outputKey = info.OutputKey.Name
+		is2DOutput = true // Custom output key indicates 2D sentence embeddings
 	}
 
 	return &TextEmbedding{
@@ -89,6 +94,7 @@ func New(opts ...Option) (*TextEmbedding, error) {
 		outputKey:     outputKey,
 		dim:           info.Dim,
 		useTokenTypes: !info.NoTokenTypeIDs,
+		is2DOutput:    is2DOutput,
 	}, nil
 }
 
@@ -218,6 +224,7 @@ func (t *TextEmbedding) embedBatch(texts []string) ([]Embedding, error) {
 		batchSize, seqLen, t.dim,
 		t.outputKey,
 		t.useTokenTypes,
+		t.is2DOutput,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("inference failed: %w", err)
