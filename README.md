@@ -9,139 +9,371 @@
   <a href="https://github.com/Anush008/fastembed-go/actions/workflows/release.yml"><img src="https://github.com/Anush008/fastembed-go/actions/workflows/release.yml/badge.svg?branch=main" alt="Semantic release"></a>
 </div>
 
-## 🍕 Features
+## Features
 
-- Supports batch embeddings with parallelism using go-routines.
-- Uses [@sugarme/tokenizer](https://github.com/sugarme/tokenizer) for fast tokenization.
-- Optimized embedding models.
+- Generate text embeddings locally using ONNX Runtime
+- 10 pre-trained models including multilingual support
+- CUDA GPU acceleration support
+- Configurable pooling strategies (CLS / Mean)
+- Batch embeddings with parallelism using goroutines
+- Automatic model downloading from HuggingFace
 
-The default embedding supports "query" and "passage" prefixes for the input text. The default model is Flag Embedding, which is top of the [MTEB](https://huggingface.co/spaces/mteb/leaderboard) leaderboard.
+## Not looking for Go?
 
-## 🔍 Not looking for Go?
+- Python: [fastembed](https://github.com/qdrant/fastembed)
+- Rust: [fastembed-rs](https://github.com/Anush008/fastembed-rs)
+- JavaScript: [fastembed-js](https://github.com/Anush008/fastembed-js)
 
-- Python 🐍: [fastembed](https://github.com/qdrant/fastembed)
-- Rust 🦀: [fastembed-rs](https://github.com/Anush008/fastembed-rs)
-- JavaScript 🌐: [fastembed-js](https://github.com/Anush008/fastembed-js)
-  
-## 🤖 Models
+## Requirements
 
-- [**BAAI/bge-base-en**](https://huggingface.co/BAAI/bge-base-en)
-- [**BAAI/bge-base-en-v1.5**](https://huggingface.co/BAAI/bge-base-en-v1.5)
-- [**BAAI/bge-small-en**](https://huggingface.co/BAAI/bge-small-en)
-- [**BAAI/bge-small-en-v1.5**](https://huggingface.co/BAAI/bge-small-en-v1.5) - Default
-- [**BAAI/bge-base-zh-v1.5**](https://huggingface.co/BAAI/bge-base-zh-v1.5)
-- [**sentence-transformers/all-MiniLM-L6-v2**](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2)
+- Go 1.21+
+- ONNX Runtime 1.22.0
+- (Optional) CUDA 12.x + cuDNN 9 for GPU acceleration
 
-## 🚀 Installation
+## Quick Start
 
-Run the following Go CLI command in your project directory:
+### 1. Install ONNX Runtime
+
+**Option A: Using Make (recommended)**
+
+```bash
+make download-onnx
+```
+
+**Option B: Manual download**
+
+Download from [ONNX Runtime releases](https://github.com/microsoft/onnxruntime/releases/tag/v1.22.0):
+
+```bash
+# Linux (GPU)
+wget https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-linux-x64-gpu-1.22.0.tgz
+tar -xzf onnxruntime-linux-x64-gpu-1.22.0.tgz
+
+# macOS (ARM64)
+wget https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-osx-arm64-1.22.0.tgz
+tar -xzf onnxruntime-osx-arm64-1.22.0.tgz
+```
+
+### 2. Set Environment Variable
+
+```bash
+# Linux
+export ONNX_PATH="/path/to/onnxruntime-linux-x64-gpu-1.22.0/lib/libonnxruntime.so"
+
+# macOS
+export ONNX_PATH="/path/to/onnxruntime-osx-arm64-1.22.0/lib/libonnxruntime.dylib"
+```
+
+> **Note:** The Makefile auto-detects ONNX Runtime in `../onnxruntime/`, so you can skip this step if using `make test`.
+
+### 3. Install the Package
 
 ```bash
 go get -u github.com/anush008/fastembed-go
 ```
 
-## ℹ︎ Notice:
-
-The Onnx runtime path is automatically loaded on most environments. However, if you encounter
-```sh
-panic: Platform-specific initialization failed: Error loading ONNX shared library
-```
-Set the `ONNX_PATH` env to your Onnx installation.
-For eg, on MacOS:
-```sh
-export ONNX_PATH="/path/to/onnx/lib/libonnxruntime.dylib"
-```
-On Linux:
-```sh
-export ONNX_PATH="/path/to/onnx/lib/libonnxruntime.so"
-```
-You can find the Onnx runtime releases [here](https://github.com/microsoft/onnxruntime/releases).
-
-## 📖 Usage
+### 4. Generate Embeddings
 
 ```go
-import "github.com/anush008/fastembed-go"
+package main
 
-// With default options
-model, err := fastembed.NewFlagEmbedding(nil)
-if err != nil {
- panic(err)
-}
-defer model.Destroy()
+import (
+    "fmt"
+    "log"
 
-// With custom options
-options := fastembed.InitOptions{
- Model:     fastembed.BGEBaseEN,
- CacheDir:  "model_cache",
- MaxLength: 200,
-}
+    fastembed "github.com/anush008/fastembed-go"
+)
 
-model, err = fastembed.NewFlagEmbedding(&options)
-if err != nil {
- panic(err)
-}
-defer model.Destroy()
+func main() {
+    // Initialize with default model (BGESmallENV15)
+    fe, err := fastembed.NewFlagEmbedding(nil)
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer fe.Destroy()
 
-documents := []string{
- "passage: Hello, World!",
- "query: Hello, World!",
- "passage: This is an example passage.",
- // You can leave out the prefix but it's recommended
- "fastembed-go is licensed under MIT",
-}
+    // Generate embeddings
+    texts := []string{
+        "Hello, world!",
+        "This is a test sentence.",
+    }
 
-// Generate embeddings with a batch-size of 25, defaults to 256
-embeddings, err := model.Embed(documents, 25)  //  -> Embeddings length: 4
-if err != nil {
- panic(err)
+    embeddings, err := fe.Embed(texts, 256) // batch size 256
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    fmt.Printf("Generated %d embeddings of dimension %d\n",
+        len(embeddings), len(embeddings[0]))
 }
 ```
 
-### Supports passage and query embeddings for more accurate results
+## Available Models
+
+| Model | Dimensions | Pooling | Description |
+|-------|------------|---------|-------------|
+| `BGESmallENV15` (default) | 384 | CLS | Fast English model |
+| `BGEBaseENV15` | 768 | CLS | Base English model |
+| `BGESmallEN` | 384 | CLS | Small English model |
+| `BGEBaseEN` | 768 | CLS | Base English model (v1) |
+| `BGESmallZH` | 512 | CLS | Chinese model |
+| `AllMiniLML6V2` | 384 | CLS | MiniLM sentence transformer |
+| `MultilingualE5Large` | 1024 | Mean | 100+ language support |
+| `MultilingualE5LargeInstruct` | 1024 | Mean | Task-specific with instructions |
+| `EmbeddingGemma300M` | 768 | Mean | Google Gemma (FP32) |
+| `EmbeddingGemma300MQ4` | 768 | Mean | Google Gemma (Q4 quantized) |
+
+## Usage Examples
+
+### Choose a Specific Model
 
 ```go
-// Generate embeddings for the passages
-// The texts are prefixed with "passage" for better results
-// The batch size is set to 1 for demonstration purposes
+fe, err := fastembed.NewFlagEmbedding(&fastembed.InitOptions{
+    Model: fastembed.MultilingualE5Large,
+})
+```
+
+### Semantic Search (Query/Passage)
+
+```go
+// Embed query with "query: " prefix
+queryEmb, err := fe.QueryEmbed("What is machine learning?")
+
+// Embed passages with "passage: " prefix
 passages := []string{
- "This is the first passage. It contains provides more context for retrieval.",
- "Here's the second passage, which is longer than the first one. It includes additional information.",
- "And this is the third passage, the longest of all. It contains several sentences and is meant for more extensive testing.",
+    "Machine learning is a subset of AI...",
+    "The weather today is sunny...",
 }
+passageEmbs, err := fe.PassageEmbed(passages, 256)
+```
 
-embeddings, err := model.PassageEmbed(passages, 1)  //  -> Embeddings length: 3
-if err != nil {
- panic(err)
-}
+### Instruction-Based Embeddings (E5-Instruct)
 
-// Generate embeddings for the query
-// The text is prefixed with "query" for better retrieval
-query := "What is the answer to this generic question?";
+```go
+fe, _ := fastembed.NewFlagEmbedding(&fastembed.InitOptions{
+    Model: fastembed.MultilingualE5LargeInstruct,
+})
 
-embeddings, err := model.QueryEmbed(query)
-if err != nil {
- panic(err)
+task := "Given a query, retrieve relevant passages"
+texts := []string{"What is machine learning?", "How do neural networks work?"}
+
+embeddings, err := fe.InstructEmbed(texts, task, 256)
+```
+
+### Custom Pooling Strategy
+
+```go
+// Override default pooling (CLS vs Mean)
+meanPooling := fastembed.PoolingMean
+fe, _ := fastembed.NewFlagEmbedding(&fastembed.InitOptions{
+    Model:   fastembed.BGESmallENV15,
+    Pooling: &meanPooling,
+})
+```
+
+### CUDA GPU Acceleration
+
+```go
+fe, _ := fastembed.NewFlagEmbedding(&fastembed.InitOptions{
+    Model:        fastembed.BGESmallENV15,
+    UseCUDA:      true,
+    CUDADeviceID: 0, // GPU device index
+})
+```
+
+### Custom Cache Directory
+
+```go
+fe, _ := fastembed.NewFlagEmbedding(&fastembed.InitOptions{
+    Model:    fastembed.BGESmallENV15,
+    CacheDir: "/custom/model/cache",
+})
+```
+
+### List Supported Models
+
+```go
+models := fastembed.ListSupportedModels()
+for _, m := range models {
+    fmt.Printf("%s (%d dims): %s\n", m.Model, m.Dim, m.Description)
 }
 ```
 
-## 🚒 Under the hood
+## API Reference
+
+### InitOptions
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `Model` | `EmbeddingModel` | `BGESmallENV15` | Model to use |
+| `CacheDir` | `string` | `local_cache` | Directory for downloaded models |
+| `MaxLength` | `int` | `512` | Maximum token sequence length |
+| `ShowDownloadProgress` | `*bool` | `true` | Show download progress bar |
+| `Pooling` | `*Pooling` | model default | Override pooling strategy |
+| `UseCUDA` | `bool` | `false` | Enable CUDA GPU acceleration |
+| `CUDADeviceID` | `int` | `0` | GPU device index |
+
+### Methods
+
+| Method | Description |
+|--------|-------------|
+| `Embed(texts, batchSize)` | Generate embeddings for multiple texts |
+| `QueryEmbed(text)` | Embed single text with "query: " prefix |
+| `PassageEmbed(texts, batchSize)` | Embed texts with "passage: " prefix |
+| `InstructEmbed(texts, task, batchSize)` | Embed with instruction prefix (E5-Instruct) |
+| `InstructQueryEmbed(query, task)` | Single query with instruction |
+| `Destroy()` | Clean up resources (must call when done) |
+
+### Pooling Strategies
+
+| Strategy | Description |
+|----------|-------------|
+| `PoolingCls` | Extract CLS token embedding (first token) |
+| `PoolingMean` | Mean of all token embeddings weighted by attention mask |
+
+## Development
+
+### Run Tests
+
+```bash
+# Quick tests (skips large model downloads)
+make test
+
+# Full tests with all models
+make test-verbose
+
+# CUDA GPU tests
+make test-cuda
+
+# All tests including CUDA
+make test-all
+
+# Specific test suites
+make test-canonical  # Original model validation
+make test-e5         # E5 model tests
+make test-gemma      # Gemma model test
+```
+
+### Other Commands
+
+```bash
+make help           # Show all commands
+make build          # Build check
+make lint           # Run golangci-lint
+make fmt            # Format code
+make clean          # Clean test cache and models
+make download-onnx  # Download ONNX Runtime
+```
+
+### Docker
+
+Run tests in a container with CUDA support pre-configured:
+
+```bash
+# Build the Docker image
+make docker-build
+
+# Run tests (downloads models fresh each time)
+make docker-test
+
+# Run tests with cached models (faster for repeated runs)
+make docker-test-cached
+
+# Run tests with GPU support
+make docker-test-gpu
+
+# Open an interactive shell in the container
+make docker-shell
+```
+
+The Docker image includes:
+
+- CUDA 12.8 + cuDNN
+- Go 1.23
+- ONNX Runtime 1.22.0 (GPU)
+
+Mount your local model cache for faster repeated runs:
+
+```bash
+docker run --rm -v $(pwd)/local_cache:/src/fastembed-go/local_cache fastembed-go-test
+```
+
+## CUDA Setup
+
+For GPU acceleration:
+
+1. **CUDA Toolkit 12.x**: [NVIDIA CUDA Downloads](https://developer.nvidia.com/cuda-downloads)
+2. **cuDNN 9**: [NVIDIA cuDNN Downloads](https://developer.nvidia.com/cudnn)
+3. **ONNX Runtime GPU**: Included in `make download-onnx` for Linux
+
+Verify CUDA works:
+
+```bash
+make test-cuda
+```
+
+## Troubleshooting
+
+### "Platform-specific initialization failed: Error loading ONNX shared library"
+
+Set the `ONNX_PATH` environment variable:
+
+```bash
+export ONNX_PATH="/path/to/libonnxruntime.so"
+```
+
+Or use the Makefile which auto-detects it:
+
+```bash
+make test
+```
+
+### "CUDA provider not available"
+
+Ensure you have:
+
+- ONNX Runtime GPU version (not CPU-only)
+- CUDA 12.x installed and in PATH
+- cuDNN 9 installed
+- Compatible NVIDIA drivers
+
+### Model download fails
+
+Check your internet connection and try again. Models are cached in `local_cache/` after first download.
+
+## Under the Hood
 
 ### Why fast?
 
-It's important we justify the "fast" in FastEmbed. FastEmbed is fast because:
-
 1. Quantized model weights
-2. ONNX Runtime which allows for inference on CPU, GPU, and other dedicated runtimes
+2. ONNX Runtime for optimized inference on CPU/GPU
+3. Parallel batch processing with goroutines
 
 ### Why light?
 
 1. No hidden dependencies via Huggingface Transformers
+2. Uses efficient Go tokenizer implementation
 
 ### Why accurate?
 
 1. Better than OpenAI Ada-002
-2. Top of the Embedding leaderboards e.g. [MTEB](https://huggingface.co/spaces/mteb/leaderboard)
+2. Top of the [MTEB leaderboard](https://huggingface.co/spaces/mteb/leaderboard)
 
-## 📄 LICENSE
+## Roadmap
 
-MIT © [2023](https://github.com/Anush008/fastembed-go/blob/main/LICENSE)
+See [ROADMAP.md](ROADMAP.md) for planned features:
+
+- 21 more text embedding models
+- Sparse embeddings (SPLADE)
+- Image embeddings (CLIP)
+- Reranking (cross-encoder)
+
+## License
+
+MIT © [2025](https://github.com/Anush008/fastembed-go/blob/main/LICENSE)
+
+## Credits
+
+- Based on [fastembed-rs](https://github.com/Anush008/fastembed-rs) (Rust implementation)
+- Uses [onnxruntime_go](https://github.com/yalue/onnxruntime_go) for ONNX Runtime bindings
+- Uses [tokenizer](https://github.com/sugarme/tokenizer) for HuggingFace tokenization
