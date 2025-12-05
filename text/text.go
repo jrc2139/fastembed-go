@@ -331,6 +331,31 @@ func (t *TextEmbedding) Destroy() error {
 	return nil
 }
 
+// TokenCount returns the number of tokens in the given text.
+// This is useful for chunking text to fit within model limits.
+func (t *TextEmbedding) TokenCount(text string) (int, error) {
+	seq := tk.NewInputSequence(text)
+	input := tk.NewSingleEncodeInput(seq)
+	encodings, err := t.tokenizer.EncodeBatch([]tk.EncodeInput{input}, false)
+	if err != nil {
+		return 0, fmt.Errorf("failed to encode text: %w", err)
+	}
+	if len(encodings) == 0 {
+		return 0, nil
+	}
+	return len(encodings[0].GetIds()), nil
+}
+
+// MaxTokens returns the maximum token length for this model.
+func (t *TextEmbedding) MaxTokens() int {
+	return t.tokenizer.MaxLength()
+}
+
+// Dimension returns the embedding dimension for this model.
+func (t *TextEmbedding) Dimension() int {
+	return t.dim
+}
+
 // extract2D extracts embeddings from 2D output [batch, dim].
 func extract2D(data []float32, batchSize, dim int) []Embedding {
 	embeddings := make([]Embedding, batchSize)
