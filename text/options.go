@@ -39,7 +39,12 @@ func defaultConfig() config {
 		MaxLength:    512,
 		ShowProgress: true,
 		Logger:       defaultLogger(),
-		MaxWorkers:   runtime.NumCPU(), // Default to number of CPUs
+		MaxWorkers:   runtime.NumCPU(),
+		// Auto-detect best execution provider:
+		// - macOS: CoreML (Neural Engine + Metal)
+		// - Linux/Windows + NVIDIA: CUDA
+		// - Fallback: CPU
+		Providers: []onnx.ExecutionProvider{onnx.AutoProviderDefault()},
 	}
 }
 
@@ -99,6 +104,27 @@ func WithCUDA(deviceID int) Option {
 func WithCoreML() Option {
 	return func(c *config) {
 		c.Providers = append(c.Providers, onnx.CoreMLProvider())
+	}
+}
+
+// WithAuto enables automatic execution provider selection based on platform:
+//   - macOS: CoreML (leverages Neural Engine + Metal GPU)
+//   - Linux/Windows with NVIDIA GPU: CUDA
+//   - Fallback: CPU
+//
+// Note: This is the default behavior. Use WithCPU() to explicitly disable
+// hardware acceleration and use CPU only.
+func WithAuto() Option {
+	return func(c *config) {
+		c.Providers = []onnx.ExecutionProvider{onnx.AutoProviderDefault()}
+	}
+}
+
+// WithCPU explicitly disables hardware acceleration and uses CPU only.
+// Use this to override the default auto-detection behavior.
+func WithCPU() Option {
+	return func(c *config) {
+		c.Providers = []onnx.ExecutionProvider{onnx.CPUProvider()}
 	}
 }
 

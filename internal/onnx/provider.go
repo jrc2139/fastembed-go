@@ -82,3 +82,37 @@ func (p *coreMLProvider) Apply(opts *ort.SessionOptions) error {
 func (p *coreMLProvider) Name() string {
 	return "CoreML"
 }
+
+// autoProvider automatically selects the best available execution provider.
+type autoProvider struct {
+	deviceID int
+	selected ExecutionProvider
+}
+
+// AutoProvider returns an execution provider that automatically selects
+// the best available backend for the current platform:
+//   - macOS: CoreML (leverages Neural Engine + Metal GPU)
+//   - Linux/Windows with NVIDIA GPU: CUDA
+//   - Fallback: CPU
+//
+// The deviceID parameter is used for CUDA device selection (ignored on other platforms).
+func AutoProvider(deviceID int) ExecutionProvider {
+	return &autoProvider{deviceID: deviceID}
+}
+
+// AutoProviderDefault returns AutoProvider with device 0.
+func AutoProviderDefault() ExecutionProvider {
+	return AutoProvider(0)
+}
+
+func (p *autoProvider) Apply(opts *ort.SessionOptions) error {
+	p.selected = detectBestProvider(p.deviceID)
+	return p.selected.Apply(opts)
+}
+
+func (p *autoProvider) Name() string {
+	if p.selected != nil {
+		return "Auto:" + p.selected.Name()
+	}
+	return "Auto"
+}

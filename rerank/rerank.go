@@ -49,6 +49,7 @@ type TextRerank struct {
 	cacheDir     string
 	useCUDA      bool
 	cudaDeviceID int
+	useAuto      bool // Auto-detect best provider
 	logger       *slog.Logger
 }
 
@@ -98,6 +99,29 @@ func WithCUDA(deviceID int) Option {
 	}
 }
 
+// WithAuto enables automatic execution provider selection based on platform:
+//   - macOS: CoreML (leverages Neural Engine + Metal GPU)
+//   - Linux/Windows with NVIDIA GPU: CUDA
+//   - Fallback: CPU
+//
+// Note: This is the default behavior. Use WithCPU() to explicitly disable
+// hardware acceleration and use CPU only.
+func WithAuto() Option {
+	return func(r *TextRerank) {
+		r.useAuto = true
+		r.useCUDA = false
+	}
+}
+
+// WithCPU explicitly disables hardware acceleration and uses CPU only.
+// Use this to override the default auto-detection behavior.
+func WithCPU() Option {
+	return func(r *TextRerank) {
+		r.useAuto = false
+		r.useCUDA = false
+	}
+}
+
 // WithLogger sets a custom slog.Logger for the reranker.
 // If not set, a default JSON logger to stderr is used.
 func WithLogger(logger *slog.Logger) Option {
@@ -119,11 +143,13 @@ func WithEmbedder(embedder Embedder) Option {
 // New creates a new TextRerank instance.
 // If WithEmbedder is provided, uses bi-encoder mode (cosine similarity).
 // Otherwise, loads a cross-encoder reranker model.
+// By default, auto-detects the best execution provider (CoreML on macOS, CUDA on Linux/Windows).
 func New(opts ...Option) (*TextRerank, error) {
 	r := &TextRerank{
 		model:     BGERerankerBase,
 		maxLength: 512,
 		logger:    defaultLogger(),
+		useAuto:   true, // Auto-detect best provider by default
 	}
 
 	for _, opt := range opts {
@@ -202,7 +228,9 @@ func New(opts ...Option) (*TextRerank, error) {
 	// Download saves files with basename only, so use basename for path
 	modelPath := filepath.Join(modelDir, filepath.Base(info.ModelFile))
 	var providers []onnx.ExecutionProvider
-	if r.useCUDA {
+	if r.useAuto {
+		providers = append(providers, onnx.AutoProvider(r.cudaDeviceID))
+	} else if r.useCUDA {
 		providers = append(providers, onnx.CUDAProvider(r.cudaDeviceID))
 	}
 
