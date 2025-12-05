@@ -19,7 +19,9 @@ type config struct {
 	Pooling      *pooling.Strategy
 	Providers    []onnx.ExecutionProvider
 	Logger       *slog.Logger
-	MaxWorkers   int // Maximum number of worker goroutines for parallel batch processing
+	MaxWorkers   int  // Maximum number of worker goroutines for parallel batch processing
+	AutoTune     bool // Automatically tune batch size and workers based on available VRAM
+	CUDADeviceID int  // CUDA device ID for auto-tuning (default 0)
 }
 
 // defaultLogger returns a default JSON logger to stderr at INFO level.
@@ -115,5 +117,16 @@ func WithMaxWorkers(n int) Option {
 		if n > 0 {
 			c.MaxWorkers = n
 		}
+	}
+}
+
+// WithAutoTune enables automatic tuning of batch size and max workers
+// based on available GPU VRAM. This is recommended when using CUDA.
+// When enabled, it queries the GPU memory and calculates optimal parameters
+// for the selected model to avoid out-of-memory errors.
+func WithAutoTune(deviceID int) Option {
+	return func(c *config) {
+		c.AutoTune = true
+		c.CUDADeviceID = deviceID
 	}
 }

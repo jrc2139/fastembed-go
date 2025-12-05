@@ -198,7 +198,7 @@ func initRegistry() {
 			NoTokenTypeIDs:  true,
 		},
 
-		// EmbeddingGemma models
+		// EmbeddingGemma models (tokenizer at root, ONNX in onnx/ subdir)
 		EmbeddingGemma300M: {
 			Model:           EmbeddingGemma300M,
 			Dim:             768,
@@ -206,7 +206,7 @@ func initRegistry() {
 			ModelCode:       "onnx-community/embeddinggemma-300m-ONNX",
 			ModelFile:       "onnx/model.onnx",
 			AdditionalFiles: []string{"onnx/model.onnx_data"},
-			TokenizerPath:   "onnx",
+			TokenizerPath:   "", // tokenizer files at repo root
 			OutputKey:       sentenceEmb,
 			NoTokenTypeIDs:  true,
 		},
@@ -217,7 +217,7 @@ func initRegistry() {
 			ModelCode:       "onnx-community/embeddinggemma-300m-ONNX",
 			ModelFile:       "onnx/model_q4.onnx",
 			AdditionalFiles: []string{"onnx/model_q4.onnx_data"},
-			TokenizerPath:   "onnx",
+			TokenizerPath:   "", // tokenizer files at repo root
 			OutputKey:       sentenceEmb,
 			NoTokenTypeIDs:  true,
 		},

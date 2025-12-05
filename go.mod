@@ -3,6 +3,7 @@ module github.com/anush008/fastembed-go
 go 1.25
 
 require (
+	github.com/NVIDIA/go-nvml v0.13.0-1
 	github.com/alitto/pond/v2 v2.6.0
 	github.com/schollz/progressbar/v3 v3.18.0
 	github.com/sugarme/tokenizer v0.3.0

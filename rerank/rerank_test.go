@@ -24,7 +24,7 @@ func TestRerank(t *testing.T) {
 		"Pandas eat bamboo and live in forests",
 	}
 
-	results, err := reranker.Rerank(query, documents, true)
+	results, err := reranker.Rerank(t.Context(), query, documents, true)
 	if err != nil {
 		t.Fatalf("rerank failed: %v", err)
 	}
@@ -78,7 +78,7 @@ func TestRerankBatch(t *testing.T) {
 		}
 	}
 
-	results, err := reranker.RerankWithBatchSize(query, documents, false, 8)
+	results, err := reranker.RerankWithBatchSize(t.Context(), query, documents, false, 8)
 	if err != nil {
 		t.Fatalf("rerank failed: %v", err)
 	}

@@ -231,27 +231,27 @@ func New(opts ...Option) (*TextRerank, error) {
 }
 
 // Rerank scores and reorders documents by relevance to a query.
-func (r *TextRerank) Rerank(query string, documents []string, returnDocuments bool) ([]Result, error) {
-	return r.RerankWithBatchSize(query, documents, returnDocuments, 256)
+func (r *TextRerank) Rerank(ctx context.Context, query string, documents []string, returnDocuments bool) ([]Result, error) {
+	return r.RerankWithBatchSize(ctx, query, documents, returnDocuments, 256)
 }
 
 // RerankWithBatchSize scores documents with a custom batch size.
-func (r *TextRerank) RerankWithBatchSize(query string, documents []string, returnDocuments bool, batchSize int) ([]Result, error) {
+func (r *TextRerank) RerankWithBatchSize(ctx context.Context, query string, documents []string, returnDocuments bool, batchSize int) ([]Result, error) {
 	if len(documents) == 0 {
 		return nil, nil
 	}
 
 	// Use bi-encoder mode if embedder is available
 	if r.embedder != nil {
-		return r.rerankBiEncoder(query, documents, returnDocuments, batchSize)
+		return r.rerankBiEncoder(ctx, query, documents, returnDocuments, batchSize)
 	}
 
 	// Cross-encoder mode
-	return r.rerankCrossEncoder(query, documents, returnDocuments, batchSize)
+	return r.rerankCrossEncoder(ctx, query, documents, returnDocuments, batchSize)
 }
 
 // rerankCrossEncoder performs reranking using a dedicated cross-encoder model.
-func (r *TextRerank) rerankCrossEncoder(query string, documents []string, returnDocuments bool, batchSize int) ([]Result, error) {
+func (r *TextRerank) rerankCrossEncoder(ctx context.Context, query string, documents []string, returnDocuments bool, batchSize int) ([]Result, error) {
 	numBatches := (len(documents) + batchSize - 1) / batchSize
 	r.logger.Debug("cross-encoder reranking",
 		slog.Int("document_count", len(documents)),
@@ -263,6 +263,11 @@ func (r *TextRerank) rerankCrossEncoder(query string, documents []string, return
 
 	// Process in batches
 	for start := 0; start < len(documents); start += batchSize {
+		// Check for cancellation between batches
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+
 		end := start + batchSize
 		if end > len(documents) {
 			end = len(documents)
@@ -295,13 +300,11 @@ func (r *TextRerank) rerankCrossEncoder(query string, documents []string, return
 }
 
 // rerankBiEncoder performs reranking using cosine similarity between embeddings.
-func (r *TextRerank) rerankBiEncoder(query string, documents []string, returnDocuments bool, batchSize int) ([]Result, error) {
+func (r *TextRerank) rerankBiEncoder(ctx context.Context, query string, documents []string, returnDocuments bool, batchSize int) ([]Result, error) {
 	r.logger.Debug("bi-encoder reranking",
 		slog.Int("document_count", len(documents)),
 		slog.Int("batch_size", batchSize),
 	)
-
-	ctx := context.Background()
 
 	// Embed the query
 	queryEmbeddings, err := r.embedder.Embed(ctx, []string{query}, 1)

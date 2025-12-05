@@ -10,6 +10,7 @@ import (
 	"github.com/alitto/pond/v2"
 	tk "github.com/sugarme/tokenizer"
 
+	"github.com/anush008/fastembed-go/cuda"
 	"github.com/anush008/fastembed-go/internal/download"
 	"github.com/anush008/fastembed-go/internal/onnx"
 	"github.com/anush008/fastembed-go/internal/output"
@@ -101,6 +102,21 @@ func New(opts ...Option) (*TextEmbedding, error) {
 	if info.OutputKey != nil && info.OutputKey.Type == output.ByName {
 		outputKey = info.OutputKey.Name
 		is2DOutput = true // Custom output key indicates 2D sentence embeddings
+	}
+
+	// Auto-tune batch size and workers based on available VRAM
+	if cfg.AutoTune {
+		modelName := modelNameForProfile(cfg.Model)
+		params, err := cuda.AutoTune(cfg.CUDADeviceID, modelName, log)
+		if err != nil {
+			log.Warn("auto-tune failed, using defaults", "error", err)
+		} else {
+			cfg.MaxWorkers = params.MaxWorkers
+			log.Info("auto-tuned parameters",
+				"batch_size", params.BatchSize,
+				"max_workers", params.MaxWorkers,
+			)
+		}
 	}
 
 	// Create worker pool for parallel batch processing
@@ -341,4 +357,44 @@ func normalize(v []float32) []float32 {
 		result[i] = x * norm
 	}
 	return result
+}
+
+// modelNameForProfile maps Model to the profile name used in cuda.AutoTune.
+func modelNameForProfile(m Model) string {
+	switch m {
+	case BGESmallENV15, BGESmallENV15Q:
+		return "bge-small-en-v1.5"
+	case BGEBaseENV15, BGEBaseENV15Q:
+		return "bge-base-en-v1.5"
+	case BGELargeENV15, BGELargeENV15Q:
+		return "bge-large-en-v1.5"
+	case AllMiniLML6V2, AllMiniLML6V2Q:
+		return "all-MiniLM-L6-v2"
+	case AllMiniLML12V2:
+		return "all-MiniLM-L6-v2" // Similar profile
+	case MultilingualE5Small:
+		return "multilingual-e5-small"
+	case MultilingualE5Base:
+		return "multilingual-e5-base"
+	case MultilingualE5Large, MultilingualE5LargeInstruct:
+		return "multilingual-e5-large"
+	case NomicEmbedTextV1:
+		return "nomic-embed-text-v1"
+	case NomicEmbedTextV15, NomicEmbedTextV15Q:
+		return "nomic-embed-text-v1.5"
+	case MxbaiEmbedLargeV1, MxbaiEmbedLargeV1Q:
+		return "mxbai-embed-large-v1"
+	case GTEBaseENV15, GTEBaseENV15Q:
+		return "gte-large-en-v1.5" // Use large profile for safety
+	case GTELargeENV15:
+		return "gte-large-en-v1.5"
+	case JinaEmbeddingsV2BaseCode:
+		return "jina-embeddings-v2-base-code"
+	case EmbeddingGemma300M, EmbeddingGemma300MQ4:
+		return "embedding-gemma-300m"
+	case ParaphraseMLMiniLML12V2, ParaphraseMLMiniLML12V2Q:
+		return "paraphrase-MiniLM-L12-v2"
+	default:
+		return string(m)
+	}
 }
