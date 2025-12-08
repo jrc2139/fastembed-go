@@ -100,10 +100,37 @@ func WithCUDA(deviceID int) Option {
 	}
 }
 
-// WithCoreML enables CoreML execution (Apple Silicon).
+// WithCoreML enables CoreML execution with precision-safe defaults (Apple Silicon).
+// Uses MLProgram format with CPUAndNeuralEngine to avoid NaN issues.
+// Requires macOS 12+ for MLProgram format.
 func WithCoreML() Option {
 	return func(c *config) {
 		c.Providers = append(c.Providers, onnx.CoreMLProvider())
+	}
+}
+
+// WithCoreMLOptions enables CoreML execution with custom options.
+// Use this to fine-tune CoreML behavior for specific requirements.
+func WithCoreMLOptions(opts onnx.CoreMLOptions) Option {
+	return func(c *config) {
+		c.Providers = append(c.Providers, onnx.CoreMLProviderWithOptions(opts))
+	}
+}
+
+// WithCoreMLSafe enables CoreML in CPU-only mode for debugging.
+// Use this to isolate precision issues or test without Neural Engine/GPU.
+func WithCoreMLSafe() Option {
+	return func(c *config) {
+		c.Providers = append(c.Providers, onnx.CoreMLProviderWithOptions(onnx.SafeCoreMLOptions()))
+	}
+}
+
+// WithCoreMLPerformance enables CoreML with all compute units for maximum speed.
+// Uses all available hardware (CPU, GPU, Neural Engine) which may have
+// slightly lower precision than the default CPUAndNeuralEngine setting.
+func WithCoreMLPerformance() Option {
+	return func(c *config) {
+		c.Providers = append(c.Providers, onnx.CoreMLProviderWithOptions(onnx.PerformanceCoreMLOptions()))
 	}
 }
 

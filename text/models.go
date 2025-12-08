@@ -53,6 +53,11 @@ const (
 	GTEBaseENV15Q Model = "gte-base-en-v1.5-q" // Dynamic quantized
 	GTELargeENV15 Model = "gte-large-en-v1.5"
 
+	// IBM Granite models
+	GraniteEmbeddingEnglishR2     Model = "granite-embedding-english-r2"
+	GraniteEmbeddingEnglishR2FP16 Model = "granite-embedding-english-r2-fp16"
+	GraniteEmbeddingEnglishR2Q4   Model = "granite-embedding-english-r2-q4"
+
 	// Other models
 	ParaphraseMLMiniLML12V2  Model = "paraphrase-multilingual-MiniLM-L12-v2"
 	ParaphraseMLMiniLML12V2Q Model = "paraphrase-multilingual-MiniLM-L12-v2-q"
@@ -315,6 +320,38 @@ func initRegistry() {
 			ModelFile:      "onnx/model.onnx",
 			NoTokenTypeIDs: true,
 		},
+
+		// IBM Granite models - ModernBERT-based, 8192 context, CLS pooling
+		GraniteEmbeddingEnglishR2: {
+			Model:           GraniteEmbeddingEnglishR2,
+			Dim:             768,
+			Description:     "IBM Granite Embedding English R2 - 149M params, 8192 context",
+			ModelCode:       "onnx-community/granite-embedding-english-r2-ONNX",
+			ModelFile:       "onnx/model.onnx",
+			AdditionalFiles: []string{"onnx/model.onnx_data"},
+			TokenizerPath:   "", // tokenizer files at repo root
+			NoTokenTypeIDs:  true,
+		},
+		GraniteEmbeddingEnglishR2FP16: {
+			Model:           GraniteEmbeddingEnglishR2FP16,
+			Dim:             768,
+			Description:     "IBM Granite Embedding English R2 FP16 - Half precision",
+			ModelCode:       "onnx-community/granite-embedding-english-r2-ONNX",
+			ModelFile:       "onnx/model_fp16.onnx",
+			AdditionalFiles: []string{"onnx/model_fp16.onnx_data"},
+			TokenizerPath:   "", // tokenizer files at repo root
+			NoTokenTypeIDs:  true,
+		},
+		GraniteEmbeddingEnglishR2Q4: {
+			Model:           GraniteEmbeddingEnglishR2Q4,
+			Dim:             768,
+			Description:     "IBM Granite Embedding English R2 Q4 - 4-bit quantized",
+			ModelCode:       "onnx-community/granite-embedding-english-r2-ONNX",
+			ModelFile:       "onnx/model_q4.onnx",
+			AdditionalFiles: []string{"onnx/model_q4.onnx_data"},
+			TokenizerPath:   "", // tokenizer files at repo root
+			NoTokenTypeIDs:  true,
+		},
 	}
 
 	registry.RegisterAll(models)
@@ -338,7 +375,8 @@ func (m Model) DefaultPooling() pooling.Strategy {
 		BGESmallENV15, BGESmallENV15Q, BGEBaseENV15, BGEBaseENV15Q,
 		BGELargeENV15, BGELargeENV15Q, BGESmallEN, BGEBaseEN, BGESmallZH,
 		GTEBaseENV15, GTEBaseENV15Q, GTELargeENV15,
-		MxbaiEmbedLargeV1, MxbaiEmbedLargeV1Q:
+		MxbaiEmbedLargeV1, MxbaiEmbedLargeV1Q,
+		GraniteEmbeddingEnglishR2, GraniteEmbeddingEnglishR2FP16, GraniteEmbeddingEnglishR2Q4:
 		return pooling.Cls
 	// Mean pooling models (default)
 	default:
