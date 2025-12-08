@@ -26,8 +26,8 @@
 
 ## Requirements
 
-- Go 1.21+
-- ONNX Runtime 1.22.0
+- Go 1.25+
+- ONNX Runtime 1.23.0
 - (Optional) CUDA 12.x + cuDNN 9 for GPU acceleration
 
 ## Quick Start
@@ -42,26 +42,26 @@ make download-onnx
 
 **Option B: Manual download**
 
-Download from [ONNX Runtime releases](https://github.com/microsoft/onnxruntime/releases/tag/v1.22.0):
+Download from [ONNX Runtime releases](https://github.com/microsoft/onnxruntime/releases/tag/v1.23.0):
 
 ```bash
 # Linux (GPU)
-wget https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-linux-x64-gpu-1.22.0.tgz
-tar -xzf onnxruntime-linux-x64-gpu-1.22.0.tgz
+wget https://github.com/microsoft/onnxruntime/releases/download/v1.23.0/onnxruntime-linux-x64-gpu-1.23.0.tgz
+tar -xzf onnxruntime-linux-x64-gpu-1.23.0.tgz
 
 # macOS (ARM64)
-wget https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-osx-arm64-1.22.0.tgz
-tar -xzf onnxruntime-osx-arm64-1.22.0.tgz
+wget https://github.com/microsoft/onnxruntime/releases/download/v1.23.0/onnxruntime-osx-arm64-1.23.0.tgz
+tar -xzf onnxruntime-osx-arm64-1.23.0.tgz
 ```
 
 ### 2. Set Environment Variable
 
 ```bash
 # Linux
-export ONNX_PATH="/path/to/onnxruntime-linux-x64-gpu-1.22.0/lib/libonnxruntime.so"
+export ONNX_PATH="/path/to/onnxruntime-linux-x64-gpu-1.23.0/lib/libonnxruntime.so"
 
 # macOS
-export ONNX_PATH="/path/to/onnxruntime-osx-arm64-1.22.0/lib/libonnxruntime.dylib"
+export ONNX_PATH="/path/to/onnxruntime-osx-arm64-1.23.0/lib/libonnxruntime.dylib"
 ```
 
 > **Note:** The Makefile auto-detects ONNX Runtime in `../onnxruntime/`, so you can skip this step if using `make test`.
@@ -288,9 +288,9 @@ make docker-shell
 
 The Docker image includes:
 
-- CUDA 12.8 + cuDNN
+- CUDA 12.8 + cuDNN 9
 - Go 1.23
-- ONNX Runtime 1.22.0 (GPU)
+- ONNX Runtime 1.23.0 (GPU)
 
 Mount your local model cache for faster repeated runs:
 

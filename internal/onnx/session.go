@@ -48,12 +48,21 @@ type SessionConfig struct {
 // Session wraps an ONNX Runtime dynamic session for efficient inference.
 // Uses DynamicAdvancedSession which supports variable input shapes without
 // recreating the session for each request.
+//
+// IMPORTANT: ONNX Runtime sessions are NOT thread-safe for concurrent Run() calls.
+// This Session struct uses a mutex to serialize all inference operations.
+// While this limits parallelism at the ONNX level, it ensures correctness.
+// For higher throughput, consider creating multiple TextEmbedding instances.
 type Session struct {
 	modelPath      string
 	options        *ort.SessionOptions
 	dynamicSession *ort.DynamicAdvancedSession
 	inputNames     []string
 	outputNames    []string
+
+	// mu protects all session operations. ONNX Runtime sessions are not thread-safe
+	// for concurrent Run() calls, so we must serialize access.
+	mu sync.Mutex
 }
 
 // NewSession creates a new ONNX session with dynamic input support.
@@ -82,6 +91,7 @@ func NewSession(modelPath string, providers ...ExecutionProvider) (*Session, err
 }
 
 // initDynamicSession lazily initializes the dynamic session with specific input/output names.
+// Must be called with s.mu held.
 func (s *Session) initDynamicSession(inputNames, outputNames []string) error {
 	if s.dynamicSession != nil {
 		return nil
@@ -130,6 +140,9 @@ func (s *Session) Destroy() error {
 // is2DOutput should be true for models that output direct sentence embeddings (2D: batch, dim),
 // false for models that output token embeddings (3D: batch, seq_len, dim).
 // Models with custom OutputKey (like "sentence_embedding") typically use 2D output.
+//
+// This function is thread-safe - it acquires a lock on the session to serialize
+// ONNX Runtime calls, as the runtime is not safe for concurrent Run() operations.
 func RunTextEmbedding(
 	session *Session,
 	inputIDs, attentionMask, tokenTypeIDs []int64,
@@ -140,7 +153,7 @@ func RunTextEmbedding(
 ) ([]float32, []int64, error) {
 	inputShape := ort.NewShape(int64(batchSize), int64(seqLen))
 
-	// Create input tensors
+	// Create input tensors (can be done outside the lock)
 	inputIDTensor, err := ort.NewTensor(inputShape, inputIDs)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create input_ids tensor: %w", err)
@@ -189,6 +202,11 @@ func RunTextEmbedding(
 
 	outputNames := []string{outputKey}
 
+	// Acquire lock for ONNX Runtime operations
+	// ONNX Runtime is NOT thread-safe for concurrent Run() calls on the same session
+	session.mu.Lock()
+	defer session.mu.Unlock()
+
 	// Initialize dynamic session on first use (cached for subsequent calls)
 	if err := session.initDynamicSession(inputNames, outputNames); err != nil {
 		return nil, nil, err
@@ -199,7 +217,11 @@ func RunTextEmbedding(
 		return nil, nil, fmt.Errorf("failed to run session: %w", err)
 	}
 
-	return outputTensor.GetData(), outputTensor.GetShape(), nil
+	// Copy output data before releasing lock (tensor will be destroyed after defer)
+	outputData := make([]float32, len(outputTensor.GetData()))
+	copy(outputData, outputTensor.GetData())
+
+	return outputData, outputTensor.GetShape(), nil
 }
 
 // HasInput checks if the model has a specific input by name.
@@ -213,6 +235,9 @@ func (s *Session) HasInput(name string) bool {
 
 // RunReranking runs a reranking inference to score query-document pairs.
 // Returns a score for each document in the batch.
+//
+// This function is thread-safe - it acquires a lock on the session to serialize
+// ONNX Runtime calls, as the runtime is not safe for concurrent Run() operations.
 func RunReranking(
 	session *Session,
 	inputIDs, attentionMask, tokenTypeIDs []int64,
@@ -221,7 +246,7 @@ func RunReranking(
 ) ([]float32, error) {
 	inputShape := ort.NewShape(int64(batchSize), int64(seqLen))
 
-	// Create input tensors
+	// Create input tensors (can be done outside the lock)
 	inputIDTensor, err := ort.NewTensor(inputShape, inputIDs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create input_ids tensor: %w", err)
@@ -262,6 +287,11 @@ func RunReranking(
 	defer outputTensor.Destroy()
 
 	outputNames := []string{"logits"}
+
+	// Acquire lock for ONNX Runtime operations
+	// ONNX Runtime is NOT thread-safe for concurrent Run() calls on the same session
+	session.mu.Lock()
+	defer session.mu.Unlock()
 
 	// Initialize dynamic session on first use (cached for subsequent calls)
 	if err := session.initDynamicSession(inputNames, outputNames); err != nil {
