@@ -24,9 +24,9 @@ type config struct {
 	CUDADeviceID int  // CUDA device ID for auto-tuning (default 0)
 }
 
-// defaultLogger returns a default JSON logger to stderr at INFO level.
+// defaultLogger returns a default text logger to stderr at INFO level.
 func defaultLogger() *slog.Logger {
-	return slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
+	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	}))
 }
@@ -182,4 +182,48 @@ func WithAutoTune(deviceID int) Option {
 		c.AutoTune = true
 		c.CUDADeviceID = deviceID
 	}
+}
+
+// OptimalBatchSize returns the recommended batch size for a given workload.
+// For CPU execution with parallel workers, smaller batches (64-128) perform better
+// because they allow better utilization of multiple CPU cores.
+// For GPU execution, larger batches may be more efficient due to GPU parallelism.
+//
+// Parameters:
+//   - totalTexts: total number of texts to embed
+//   - workers: number of worker goroutines (use runtime.NumCPU() if unsure)
+//   - isGPU: true if using CUDA/CoreML execution
+//
+// Returns the recommended batch size.
+func OptimalBatchSize(totalTexts, workers int, isGPU bool) int {
+	if isGPU {
+		// GPU benefits from larger batches to maximize parallel compute
+		// But cap at 256 to avoid memory issues
+		batchSize := totalTexts / workers
+		if batchSize < 64 {
+			batchSize = 64
+		}
+		if batchSize > 256 {
+			batchSize = 256
+		}
+		return batchSize
+	}
+
+	// CPU benefits from smaller batches with parallel workers
+	// Aim for ~2-4 batches per worker for good load balancing
+	targetBatches := workers * 2
+	if targetBatches < 4 {
+		targetBatches = 4
+	}
+
+	batchSize := (totalTexts + targetBatches - 1) / targetBatches
+	// Clamp to reasonable range
+	if batchSize < 32 {
+		batchSize = 32
+	}
+	if batchSize > 128 {
+		batchSize = 128
+	}
+
+	return batchSize
 }

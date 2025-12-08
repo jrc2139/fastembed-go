@@ -53,9 +53,9 @@ type TextRerank struct {
 	logger       *slog.Logger
 }
 
-// defaultLogger returns a default JSON logger to stderr at INFO level.
+// defaultLogger returns a default text logger to stderr at INFO level.
 func defaultLogger() *slog.Logger {
-	return slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
+	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	}))
 }

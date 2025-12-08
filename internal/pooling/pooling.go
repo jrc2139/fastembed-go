@@ -39,23 +39,34 @@ func (s Strategy) Pool(data []float32, batchSize, seqLen, dim int, mask []int64)
 }
 
 // clsPool extracts the CLS token (first token) from each batch item.
+// Uses a single allocation for all embeddings to reduce memory fragmentation.
 func clsPool(data []float32, batchSize, seqLen, dim int) [][]float32 {
+	// Single allocation for all embedding data
+	allEmbeddings := make([]float32, batchSize*dim)
+
+	// Copy CLS tokens directly into the allocation
+	for i := 0; i < batchSize; i++ {
+		srcOffset := i * seqLen * dim // Start of this batch item (first token)
+		dstOffset := i * dim
+		copy(allEmbeddings[dstOffset:dstOffset+dim], data[srcOffset:srcOffset+dim])
+	}
+
+	// Create slice headers pointing into the single allocation
 	result := make([][]float32, batchSize)
 	for i := 0; i < batchSize; i++ {
-		embedding := make([]float32, dim)
-		offset := i * seqLen * dim // Start of this batch item
-		copy(embedding, data[offset:offset+dim])
-		result[i] = embedding
+		result[i] = allEmbeddings[i*dim : (i+1)*dim]
 	}
 	return result
 }
 
 // meanPool computes attention-weighted mean pooling.
+// Uses a single allocation for all embeddings to reduce memory fragmentation.
 func meanPool(data []float32, batchSize, seqLen, dim int, mask []int64) [][]float32 {
-	result := make([][]float32, batchSize)
+	// Single allocation for all embedding data
+	allEmbeddings := make([]float32, batchSize*dim)
 
 	for i := 0; i < batchSize; i++ {
-		embedding := make([]float32, dim)
+		embedding := allEmbeddings[i*dim : (i+1)*dim]
 		var maskSum float32
 
 		// Sum embeddings weighted by attention mask
@@ -72,13 +83,17 @@ func meanPool(data []float32, batchSize, seqLen, dim int, mask []int64) [][]floa
 
 		// Divide by mask sum (avoid division by zero)
 		if maskSum > 0 {
+			invMaskSum := 1.0 / maskSum
 			for k := 0; k < dim; k++ {
-				embedding[k] /= maskSum
+				embedding[k] *= invMaskSum
 			}
 		}
-
-		result[i] = embedding
 	}
 
+	// Create slice headers pointing into the single allocation
+	result := make([][]float32, batchSize)
+	for i := 0; i < batchSize; i++ {
+		result[i] = allEmbeddings[i*dim : (i+1)*dim]
+	}
 	return result
 }
